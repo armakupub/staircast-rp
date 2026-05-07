@@ -1,6 +1,7 @@
 package pzmod.staircastrp;
 
 import java.lang.reflect.Field;
+import java.util.concurrent.atomic.AtomicIntegerArray;
 
 import zombie.characters.IsoGameCharacter;
 import zombie.iso.IsoCamera;
@@ -20,7 +21,7 @@ import zombie.iso.IsoMovingObject;
  *       Read-path patches use this combined with thread context to decide:
  *       <ul>
  *         <li>render thread: ThreadLocal set → return fake (the upper-floor Z).</li>
- *         <li>non-render thread: ThreadLocal null but fieldMutated[idx]=true →
+ *         <li>non-render thread: ThreadLocal null but fieldMutated.get(idx)==1 →
  *             return saved real value (so updateFalling on game thread doesn't
  *             see the fake field and trigger the infinite stair-fall loop).</li>
  *         <li>otherwise: skip, vanilla getter returns this.x as usual.</li>
@@ -45,9 +46,23 @@ public final class FakeWindow {
 
     public static final ThreadLocal<FakeFrameState> renderingFake = new ThreadLocal<>();
 
-    /** Volatile flags indicating that the camChar's x/y/z private fields have
-     *  been reflectively mutated to fake values. Cleared on render-pass exit. */
-    public static final boolean[] fieldMutated = new boolean[MAX_PLAYERS];
+    /**
+     * Per-player flag indicating that the camChar's x/y/z private fields have
+     * been reflectively mutated to fake values. Cleared on render-pass exit.
+     *
+     * <p>AtomicIntegerArray (not boolean[]) for cross-thread happens-before.
+     * Array elements are never volatile even if the reference is. Without a
+     * release/acquire edge a non-render thread could read the flag still == 0
+     * after the render thread set it to 1, miss the read-path shadow, and
+     * observe the fake field via the vanilla getter — which is what triggers
+     * the updateFalling infinite-loop on stairs.
+     *
+     * <p>{@code set(idx, 1)} / {@code set(idx, 0)} provide volatile-write
+     * semantics; {@code get(idx)} is volatile-read. The release on
+     * {@code set(idx, 1)} also publishes the FakeFrameState mutations done by
+     * Patch_IsoWorld earlier in the frame.
+     */
+    public static final AtomicIntegerArray fieldMutated = new AtomicIntegerArray(MAX_PLAYERS);
 
     private static Field FIELD_X;
     private static Field FIELD_Y;
@@ -122,7 +137,7 @@ public final class FakeWindow {
     public static FakeFrameState findMutatedFor(IsoMovingObject self) {
         if (self == null) return null;
         for (int i = 0; i < MAX_PLAYERS; i++) {
-            if (!fieldMutated[i]) continue;
+            if (fieldMutated.get(i) == 0) continue;
             FakeFrameState ffs = data[i];
             if (ffs != null && ffs.camChar == self) return ffs;
         }

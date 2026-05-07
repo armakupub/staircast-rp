@@ -33,10 +33,18 @@ public class Patch_IsoCell {
                 if (!FakeWindow.isReady(idx)) return;
 
                 FakeFrameState ffs = FakeWindow.get(idx);
+                if (ffs == null) return;
+
+                // Captures only — commit opened=true immediately after so any
+                // throw further down still hits exit cleanup. Mirror of
+                // FBORenderCell.Patch_renderInternal — see that file for the
+                // full ordering rationale.
                 savedX = fs.camCharacterX;
                 savedY = fs.camCharacterY;
                 savedZ = fs.camCharacterZ;
                 savedSquare = fs.camCharacterSquare;
+                opened = true;
+                FakeWindow.renderingFake.set(ffs);
 
                 fs.camCharacterX = ffs.fakePos.x;
                 fs.camCharacterY = ffs.fakePos.y;
@@ -57,11 +65,16 @@ public class Patch_IsoCell {
                 // mismatch -> visible flicker on stairs.
                 //
                 // Field write skips setX/Y/Z (which would also touch nx, scriptnx
-                // and break stair-climb prediction). Restore in OnExit.
+                // and break stair-climb prediction). Set fieldMutated.set(idx, 1)
+                // BEFORE the write so a non-render reader during the gap sees
+                // flag=1 and the shadow returns realPos.x — which still matches
+                // the real field. Rollback on Reflection failure.
                 if (ffs.camChar != null) {
+                    FakeWindow.fieldMutated.set(idx, 1);
                     if (FakeWindow.writeFakePos(ffs.camChar, ffs.fakePos.x, ffs.fakePos.y, ffs.fakePos.z)) {
-                        FakeWindow.fieldMutated[idx] = true;
                         posMutated = true;
+                    } else {
+                        FakeWindow.fieldMutated.set(idx, 0);
                     }
                 }
 
@@ -71,16 +84,13 @@ public class Patch_IsoCell {
                     savedRoom = fake.room;
                     savedRoomId = fake.roomId;
                     savedExterior = fake.getProperties().has(IsoFlagType.exterior);
+                    sqSwapped = true;
                     fake.room = floor.room;
                     fake.roomId = floor.getRoomID();
                     if (savedExterior) {
                         fake.getProperties().unset(IsoFlagType.exterior);
                     }
-                    sqSwapped = true;
                 }
-
-                FakeWindow.renderingFake.set(ffs);
-                opened = true;
             } catch (Throwable t) {
                 Mod.instance.log("IsoCell.renderInternal enter failed: " + t);
             }
@@ -109,11 +119,11 @@ public class Patch_IsoCell {
                 fs.camCharacterZ = savedZ;
                 fs.camCharacterSquare = savedSquare;
 
-                FakeFrameState ffs = FakeWindow.renderingFake.get();
+                FakeFrameState ffs = FakeWindow.get(idx);
                 if (ffs != null) {
                     if (posMutated && ffs.camChar != null) {
                         FakeWindow.writeRealPos(ffs.camChar, savedX, savedY, savedZ);
-                        FakeWindow.fieldMutated[idx] = false;
+                        FakeWindow.fieldMutated.set(idx, 0);
                     }
                     if (currentSwapped && ffs.camChar != null) {
                         ffs.camChar.setCurrent(savedCurrent);

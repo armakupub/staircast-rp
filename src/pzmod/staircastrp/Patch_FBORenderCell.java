@@ -34,10 +34,19 @@ public class Patch_FBORenderCell {
                 if (!FakeWindow.isReady(idx)) return;
 
                 FakeFrameState ffs = FakeWindow.get(idx);
+                if (ffs == null) return;
+
+                // Captures only — no mutation, no throws. Commit opened=true
+                // immediately after so any throw further down still hits the
+                // exit cleanup path. Each cleanup branch is gated on its own
+                // step-flag (currentSwapped, posMutated, sqSwapped) to know
+                // which mutations actually landed.
                 savedX = fs.camCharacterX;
                 savedY = fs.camCharacterY;
                 savedZ = fs.camCharacterZ;
                 savedSquare = fs.camCharacterSquare;
+                opened = true;
+                FakeWindow.renderingFake.set(ffs);
 
                 fs.camCharacterX = ffs.fakePos.x;
                 fs.camCharacterY = ffs.fakePos.y;
@@ -50,10 +59,22 @@ public class Patch_FBORenderCell {
                     currentSwapped = true;
                 }
 
+                // Set the visibility flag BEFORE writing fake fields. With
+                // the original (write-then-flag) order, a non-render thread
+                // reading getX between the two ops sees fake-Z via the
+                // vanilla getter (no shadow yet) — exactly the read that
+                // updateFalling does, triggering the infinite stair-fall
+                // loop. Pre-setting the flag means that during the gap the
+                // shadow returns realPos.x, which matches the still-real
+                // field; once writeFakePos lands, the shadow keeps
+                // returning realPos.x while render-path reads via TL get
+                // fakePos.x. Rollback on Reflection failure.
                 if (ffs.camChar != null) {
+                    FakeWindow.fieldMutated.set(idx, 1);
                     if (FakeWindow.writeFakePos(ffs.camChar, ffs.fakePos.x, ffs.fakePos.y, ffs.fakePos.z)) {
-                        FakeWindow.fieldMutated[idx] = true;
                         posMutated = true;
+                    } else {
+                        FakeWindow.fieldMutated.set(idx, 0);
                     }
                 }
 
@@ -63,16 +84,15 @@ public class Patch_FBORenderCell {
                     savedRoom = fake.room;
                     savedRoomId = fake.roomId;
                     savedExterior = fake.getProperties().has(IsoFlagType.exterior);
+                    // Commit before mutation so a partial throw mid-swap
+                    // still gets cleaned up by exit's sqSwapped branch.
+                    sqSwapped = true;
                     fake.room = floor.room;
                     fake.roomId = floor.getRoomID();
                     if (savedExterior) {
                         fake.getProperties().unset(IsoFlagType.exterior);
                     }
-                    sqSwapped = true;
                 }
-
-                FakeWindow.renderingFake.set(ffs);
-                opened = true;
             } catch (Throwable t) {
                 Mod.instance.log("FBORenderCell.renderInternal enter failed: " + t);
             }
@@ -101,11 +121,14 @@ public class Patch_FBORenderCell {
                 fs.camCharacterZ = savedZ;
                 fs.camCharacterSquare = savedSquare;
 
-                FakeFrameState ffs = FakeWindow.renderingFake.get();
+                // Use FakeWindow.get(idx) instead of TL — TL may have been
+                // cleared by a nested inverse-pair patch (renderPlayers,
+                // FBORenderTrees) that ran inside this render window.
+                FakeFrameState ffs = FakeWindow.get(idx);
                 if (ffs != null) {
                     if (posMutated && ffs.camChar != null) {
                         FakeWindow.writeRealPos(ffs.camChar, savedX, savedY, savedZ);
-                        FakeWindow.fieldMutated[idx] = false;
+                        FakeWindow.fieldMutated.set(idx, 0);
                     }
                     if (currentSwapped && ffs.camChar != null) {
                         ffs.camChar.setCurrent(savedCurrent);
@@ -173,21 +196,26 @@ public class Patch_FBORenderCell {
                 savedZ = fs.camCharacterZ;
                 savedSquare = fs.camCharacterSquare;
                 saved = ffs;
+                // Captures done — commit early so any throw downstream still
+                // hits the exit re-mutate path and restores the fake window.
+                paused = true;
 
                 fs.camCharacterX = ffs.realPos.x;
                 fs.camCharacterY = ffs.realPos.y;
                 fs.camCharacterZ = ffs.realPos.z;
                 fs.camCharacterSquare = ffs.realSquare;
 
+                // De-mutate order: writeRealPos BEFORE fieldMutated.set(0).
+                // During the gap a non-render reader sees flag=1 and gets
+                // realPos.x, matching the now-real field.
                 if (ffs.camChar != null) {
                     savedCurrent = ffs.camChar.getCurrentSquare();
                     ffs.camChar.setCurrent(ffs.realSquare);
                     FakeWindow.writeRealPos(ffs.camChar, ffs.realPos.x, ffs.realPos.y, ffs.realPos.z);
-                    FakeWindow.fieldMutated[idx] = false;
+                    FakeWindow.fieldMutated.set(idx, 0);
                 }
 
                 FakeWindow.renderingFake.remove();
-                paused = true;
             } catch (Throwable t) {
                 Mod.instance.log("FBORenderCell.renderPlayers enter failed: " + t);
             }
@@ -212,8 +240,12 @@ public class Patch_FBORenderCell {
                 fs.camCharacterSquare = savedSquare;
                 if (saved != null && saved.camChar != null && savedCurrent != null) {
                     saved.camChar.setCurrent(savedCurrent);
-                    FakeWindow.writeFakePos(saved.camChar, saved.fakePos.x, saved.fakePos.y, saved.fakePos.z);
-                    FakeWindow.fieldMutated[idx] = true;
+                    // Re-mutate order: flag BEFORE writeFakePos. See the
+                    // ordering rationale on the renderInternal enter site.
+                    FakeWindow.fieldMutated.set(idx, 1);
+                    if (!FakeWindow.writeFakePos(saved.camChar, saved.fakePos.x, saved.fakePos.y, saved.fakePos.z)) {
+                        FakeWindow.fieldMutated.set(idx, 0);
+                    }
                 }
             } finally {
                 if (saved != null) FakeWindow.renderingFake.set(saved);

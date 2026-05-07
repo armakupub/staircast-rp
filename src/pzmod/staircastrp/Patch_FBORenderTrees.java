@@ -30,6 +30,7 @@ public class Patch_FBORenderTrees {
                 savedZ = fs.camCharacterZ;
                 savedSquare = fs.camCharacterSquare;
                 saved = ffs;
+                paused = true;
 
                 fs.camCharacterX = ffs.realPos.x;
                 fs.camCharacterY = ffs.realPos.y;
@@ -40,11 +41,10 @@ public class Patch_FBORenderTrees {
                     savedCurrent = ffs.camChar.getCurrentSquare();
                     ffs.camChar.setCurrent(ffs.realSquare);
                     FakeWindow.writeRealPos(ffs.camChar, ffs.realPos.x, ffs.realPos.y, ffs.realPos.z);
-                    FakeWindow.fieldMutated[idx] = false;
+                    FakeWindow.fieldMutated.set(idx, 0);
                 }
 
                 FakeWindow.renderingFake.remove();
-                paused = true;
             } catch (Throwable t) {
                 Mod.instance.log("FBORenderTrees.init enter failed: " + t);
             }
@@ -69,8 +69,12 @@ public class Patch_FBORenderTrees {
                 fs.camCharacterSquare = savedSquare;
                 if (saved != null && saved.camChar != null && savedCurrent != null) {
                     saved.camChar.setCurrent(savedCurrent);
-                    FakeWindow.writeFakePos(saved.camChar, saved.fakePos.x, saved.fakePos.y, saved.fakePos.z);
-                    FakeWindow.fieldMutated[idx] = true;
+                    // Re-mutate: flag BEFORE writeFakePos. See
+                    // FBORenderCell.Patch_renderInternal enter for rationale.
+                    FakeWindow.fieldMutated.set(idx, 1);
+                    if (!FakeWindow.writeFakePos(saved.camChar, saved.fakePos.x, saved.fakePos.y, saved.fakePos.z)) {
+                        FakeWindow.fieldMutated.set(idx, 0);
+                    }
                 }
             } finally {
                 if (saved != null) FakeWindow.renderingFake.set(saved);
