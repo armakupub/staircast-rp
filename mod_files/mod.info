@@ -1,0 +1,8 @@
+name=Staircast RP
+id=StaircastRP
+description=Read-path alternative to upstream Staircast.
+url=
+require=ZombieBuddy
+incompatible=Staircast
+modversion=1.0.0
+pack=StaircastRP
