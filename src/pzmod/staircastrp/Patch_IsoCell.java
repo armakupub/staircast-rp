@@ -58,17 +58,17 @@ public class Patch_IsoCell {
                 }
 
                 // Write fake x/y/z onto the camChar's private fields.
-                // Direct-field readers in PZ (IsoGameCharacter.getHeightAboveFloor,
-                // IsoCell.IsCutawaySquare etc.) bypass our getter patches and
-                // would otherwise see real values for an entire frame while
-                // render code via getter sees fake -> per-frame cutaway state
-                // mismatch -> visible flicker on stairs.
+                // Direct-field readers in PZ (IsoCell.IsCutawaySquare etc.)
+                // bypass our getter patches and would otherwise see real
+                // values for an entire frame while render code via getter
+                // sees fake -> per-frame cutaway state mismatch -> visible
+                // flicker on stairs.
                 //
-                // Field write skips setX/Y/Z (which would also touch nx, scriptnx
-                // and break stair-climb prediction). Set fieldMutated.set(idx, 1)
-                // BEFORE the write so a non-render reader during the gap sees
-                // flag=1 and the shadow returns realPos.x — which still matches
-                // the real field. Rollback on Reflection failure.
+                // Field write skips setX/Y/Z's side effects on nx, scriptnx,
+                // lx, ly, lz. Set fieldMutated.set(idx, 1) BEFORE the write
+                // so a non-render reader during the gap sees flag=1 and the
+                // shadow returns realPos.x, which still matches the real
+                // field. Rollback on Reflection failure.
                 if (ffs.camChar != null) {
                     FakeWindow.fieldMutated.set(idx, 1);
                     if (FakeWindow.writeFakePos(ffs.camChar, ffs.fakePos.x, ffs.fakePos.y, ffs.fakePos.z)) {

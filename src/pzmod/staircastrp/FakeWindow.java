@@ -22,22 +22,22 @@ import zombie.iso.IsoMovingObject;
  *       <ul>
  *         <li>render thread: ThreadLocal set → return fake (the upper-floor Z).</li>
  *         <li>non-render thread: ThreadLocal null but fieldMutated.get(idx)==1 →
- *             return saved real value (so updateFalling on game thread doesn't
- *             see the fake field and trigger the infinite stair-fall loop).</li>
+ *             return saved real value (so concurrent reads from background
+ *             threads such as LightingThread, async sound, AI workers don't
+ *             observe fake values during the render window).</li>
  *         <li>otherwise: skip, vanilla getter returns this.x as usual.</li>
  *       </ul></li>
  * </ul>
  *
- * <p>The reason for the field write at all: PZ's IsoGameCharacter.updateFalling
- * helpers (getHeightAboveFloor) read this.current as a field, and PZ's render
- * code reads player position via getX/getY/getZ getters. With ThreadLocal-only
- * read-path, every PZ read on a non-render thread that doesn't go through the
- * patched getter sees real values, but render-thread reads via getter see fake.
- * That mismatch creates a per-frame visual instability ("ghost jumping" cutaway
- * flicker on stairs) that hysteresis on the activation gate doesn't fix.
- * Writing the field directly makes all reads see fake DURING the render window;
- * the read-path patch then re-isolates: non-render threads get the saved-real
- * back so the stair-climb / fall logic stays consistent.
+ * <p>The reason for the field write at all: PZ's render code mixes getter
+ * calls with direct-field reads on x/y/z (e.g. IsoCell.IsCutawaySquare).
+ * Direct-field reads bypass the getter patch and would see real values for
+ * an entire frame while render code via getter sees fake, producing visible
+ * cutaway flicker on stairs. Writing the field directly makes all reads see
+ * fake DURING the render window; the read-path patch then re-isolates
+ * background threads (LightingThread, async sound, AI workers) by returning
+ * the saved real value when fieldMutated.get(idx) == 1 and the caller is not
+ * the render thread.
  */
 public final class FakeWindow {
     public static final int MAX_PLAYERS = 4;
@@ -54,8 +54,8 @@ public final class FakeWindow {
      * Array elements are never volatile even if the reference is. Without a
      * release/acquire edge a non-render thread could read the flag still == 0
      * after the render thread set it to 1, miss the read-path shadow, and
-     * observe the fake field via the vanilla getter — which is what triggers
-     * the updateFalling infinite-loop on stairs.
+     * observe the fake field via the vanilla getter, defeating the per-thread
+     * isolation that the shadow provides.
      *
      * <p>{@code set(idx, 1)} / {@code set(idx, 0)} provide volatile-write
      * semantics; {@code get(idx)} is volatile-read. The release on
@@ -102,9 +102,9 @@ public final class FakeWindow {
         return ffs != null && ffs.frameCounter == IsoCamera.frameState.frameCount;
     }
 
-    /** Reflectively writes x/y/z fields on the camChar — does NOT touch
-     *  nx, scriptnx, lx, ly, lz, so stair-climb / interpolation logic on the
-     *  game thread is unaffected. Returns true if the write succeeded. */
+    /** Reflectively writes x/y/z fields on the camChar, skipping setX/Y/Z's
+     *  side effects on nx, scriptnx, lx, ly, lz. Returns true if the write
+     *  succeeded. */
     public static boolean writeFakePos(IsoGameCharacter camChar, float x, float y, float z) {
         if (FIELD_X == null) return false;
         try {

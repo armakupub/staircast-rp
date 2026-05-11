@@ -1,6 +1,6 @@
 # Staircast RP
 
-Project Zomboid mod, alternative implementation of the [Staircast](https://github.com/copiumsawsed/pz-Staircast) cutaway technique. **RP** stands for **Read-Path**: instead of mutating live player state during the render pass (`setX/setY/setZ`, which also writes `nx/scriptnx` prediction fields read by the game-thread stair-climb logic), this mod reflectively writes only the bare `x/y/z` fields and shadows real values back to non-render threads via a ThreadLocal-gated read-path on `IsoMovingObject.getX/Y/Z/getCurrentSquare`.
+Project Zomboid mod, alternative implementation of the [Staircast](https://github.com/copiumsawsed/pz-Staircast) cutaway technique. **RP** stands for **Read-Path**: instead of using `setX/setY/setZ` to mutate live player state during the render pass, this mod reflectively writes only the bare `x/y/z` fields and shadows real values back to non-render threads via a ThreadLocal-gated read-path on `IsoMovingObject.getX/Y/Z/getCurrentSquare`. The design trade-off is per-thread isolation (background threads such as `LightingThread`, async sound and AI workers don't observe fake values during the render window) against a measurable cost on the JIT-hot `getX/Y/Z` getters.
 
 ## Status
 
@@ -29,7 +29,7 @@ Both mods register ZombieBuddy `@Patch` advices on the same render-path classes 
 
 ## Attribution
 
-Inspired by and tested against [`copiumsawsed/pz-Staircast`](https://github.com/copiumsawsed/pz-Staircast) (MIT). The cutaway-on-stairs idea, the FakeFrameState pattern, and the patched PZ classes are from the upstream. The reflective field-write fix and the ThreadLocal-gated read-path are this mod's contribution; full reasoning in `UPSTREAM_ISSUE.md`.
+Derived from [`copiumsawsed/pz-Staircast`](https://github.com/copiumsawsed/pz-Staircast) (MIT). The cutaway-on-stairs idea, the FakeFrameState pattern, and the patched PZ classes are from the upstream. The reflective field-write and the ThreadLocal-gated read-path are this mod's design choice. The original motivation hypothesis was withdrawn after further decompile review; see `UPSTREAM_ISSUE.md` for the historical filing.
 
 ## License
 

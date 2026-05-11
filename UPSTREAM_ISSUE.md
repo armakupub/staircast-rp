@@ -4,6 +4,21 @@ Filed 2026-04-30 as <https://github.com/copiumsawsed/pz-Staircast/issues/1>.
 
 ---
 
+## Status (2026-05-11): hypothesis withdrawn
+
+After re-reading the 42.18 decompile in response to the upstream reply on issue #1:
+
+- `scriptnz` is not consumed by `doStairs` (write-only side effect of `setZ`).
+- `lastZ` (backing field `lz`) is dead state: the only call site of `getLastZ()` writes into `IsoGameCharacter.llz`, and `getLlz()` has no readers in the decompile.
+
+The threading and state-corruption mechanism described below does not hold.
+
+StaircastRP remains as an alternative implementation: per-thread isolation on the read path against potential concurrent reads from background threads (`LightingThread`, async sound, AI workers), traded against a measurable cost on the JIT-hot `IsoMovingObject.getX/Y/Z` getters. This is a defensive design choice, not a fix for a verified bug.
+
+The body below is retained as the historical record of what was filed.
+
+---
+
 ## Title
 
 ```
